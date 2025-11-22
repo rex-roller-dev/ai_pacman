@@ -1,0 +1,5 @@
+{
+  "name": "Pacman AI Logic Visualizer",
+  "description": "An interactive visualization of the Pacman AI evaluation functions provided in the Python code. Watch Pacman make decisions based on weighted heuristics.",
+  "requestFramePermissions": []
+}
