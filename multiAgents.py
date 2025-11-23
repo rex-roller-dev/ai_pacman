@@ -148,7 +148,8 @@ class MultiAgentSearchAgent(Agent):
 ########################
 
 
-    def __init__(self, evalFn = 'betterEvaluationFunction', depth = '2'):
+    def __init__(self, evalFn = 'scoreEvaluationFunction', depth = '2'):
+        #两个可选参数，scoreEvaluationFunction和betterEva
         self.index = 0 # Pacman is always agent index 0
         self.evaluationFunction = util.lookup(evalFn, globals())
         self.depth = int(depth)
@@ -232,89 +233,109 @@ class MinimaxAgent(MultiAgentSearchAgent):
         _, action = minimax(gameState, 0, 0)
         return action
 
-
 class AlphaBetaAgent(MultiAgentSearchAgent):
     """
-    Your minimax agent with alpha-beta pruning (question 3)
+    AlphaBeta 优化版：
+    - 使用 betterEvaluationFunction
+    - 优先安全路径
+    - 避免两侧被鬼夹击
     """
 
     def getAction(self, gameState):
-        """
-        Returns the minimax action using self.depth and self.evaluationFunction
-        """
-        "*** YOUR CODE HERE ***"
-
-
-        def alphabeta(state, depth, agentIndex, alpha, beta):
-            if depth == self.depth or state.isWin() or state.isLose():
-                return self.evaluationFunction(state)
-
-            numAgents = state.getNumAgents()
-
-            # ---------- MAX (Pacman) ----------
-            if agentIndex == 0:
-                value = float('-inf')
-                actions = state.getLegalActions(0)
-
-                # ---- Move Ordering：优先探索更有希望的动作 ----
-                actions = sorted(actions, key=lambda a: self.evaluationFunction(state.generateSuccessor(0, a)), reverse=True)
-
-                for action in actions:
-                    successor = state.generateSuccessor(0, action)
-                    value = max(value, alphabeta(successor, depth, 1, alpha, beta))
-                    alpha = max(alpha, value)
-                    if value >= beta:
-                        return value
-                return value
-
-            # ---------- MIN (Ghosts) ----------
-            else:
-                value = float('inf')
-                actions = state.getLegalActions(agentIndex)
-
-                nextAgent = agentIndex + 1
-                nextDepth = depth
-                if nextAgent == numAgents:
-                    nextAgent = 0
-                    nextDepth += 1
-
-                for action in actions:
-                    successor = state.generateSuccessor(agentIndex, action)
-                    value = min(value, alphabeta(successor, nextDepth, nextAgent, alpha, beta))
-                    beta = min(beta, value)
-                    if value <= alpha:
-                        return value
-                return value
-
-        # ===== ROOT SEARCH WITH STOP PENALTY =====
+        numAgents = gameState.getNumAgents()
+        alpha, beta = float('-inf'), float('inf')
         bestAction = None
         bestValue = float('-inf')
-        alpha, beta = float('-inf'), float('inf')
 
         for action in gameState.getLegalActions(0):
-
-            # 🚫强制降低 STOP 和反复横跳的优先级
             if action == "STOP":
-                continue
-
+                continue  # 不停留
             successor = gameState.generateSuccessor(0, action)
-            value = alphabeta(successor, 0, 1, alpha, beta)
-
-            # —— Corner Avoidance：远离死角 —— 
-            x, y = successor.getPacmanPosition()
-            width, height = gameState.getWalls().width, gameState.getWalls().height
-
-            # 如果靠墙 → 轻微扣分（但不强制禁止）
-            if x == 1 or y == 1 or x == width - 2 or y == height - 2:
-                value -= 3  
-
+            value = self.alphabeta(successor, 0, 1, alpha, beta)
             if value > bestValue:
                 bestValue = value
                 bestAction = action
-
             alpha = max(alpha, bestValue)
 
         return bestAction
+
+    def alphabeta(self, state, depth, agentIndex, alpha, beta):
+        numAgents = state.getNumAgents()
+        isPacman = (agentIndex == 0)
+
+        if state.isWin() or state.isLose() or depth == self.depth:
+            return self.evaluationFunction(state)
+
+        actions = state.getLegalActions(agentIndex)
+        if not actions:
+            return self.evaluationFunction(state)
+
+        if isPacman:
+            value = float('-inf')
+            # 优先按安全路径评分排序
+            actions = sorted(actions, key=lambda a: self.safeScore(state.generateSuccessor(0, a)), reverse=True)
+            for action in actions:
+                successor = state.generateSuccessor(agentIndex, action)
+                value = max(value, self.alphabeta(successor, depth, 1, alpha, beta))
+                alpha = max(alpha, value)
+                if value >= beta:
+                    break  # 剪枝
+            return value
+        else:
+            value = float('inf')
+            nextAgent = agentIndex + 1
+            nextDepth = depth
+            if nextAgent == numAgents:
+                nextAgent = 0
+                nextDepth += 1
+            for action in actions:
+                successor = state.generateSuccessor(agentIndex, action)
+                value = min(value, self.alphabeta(successor, nextDepth, nextAgent, alpha, beta))
+                beta = min(beta, value)
+                if value <= alpha:
+                    break
+            return value
+
+    def safeScore(self, state):
+        """
+        对动作后的状态额外评估安全性
+        """
+        pacmanPos = state.getPacmanPosition()
+        ghosts = state.getGhostStates()
+        walls = state.getWalls()
+        from util import manhattanDistance
+
+        # 检查左右是否有鬼堵住
+        x, y = pacmanPos
+        leftDanger = sum(1 for g in ghosts if g.getPosition() == (x-1, y))
+        rightDanger = sum(1 for g in ghosts if g.getPosition() == (x+1, y))
+        dangerScore = 0
+        if leftDanger >= 2 and rightDanger >= 2:
+            dangerScore -= 200  # 左右都被鬼堵，危险
+
+        # BFS 安全路径长度
+        import queue
+        visited = set()
+        q = queue.Queue()
+        q.put((pacmanPos, 0))
+        visited.add(pacmanPos)
+        safe_count = 0
+        while not q.empty() and safe_count < 50:
+            current, dist = q.get()
+            cx, cy = current
+            if walls[cx][cy]:
+                continue
+            safe_count += 1
+            for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+                nx, ny = cx+dx, cy+dy
+                if (nx, ny) not in visited and not walls[nx][ny]:
+                    if all(manhattanDistance((nx, ny), g.getPosition()) > 1 for g in ghosts):
+                        visited.add((nx, ny))
+                        q.put(((nx, ny), dist+1))
+        if safe_count < 3:
+            dangerScore -= 300  # 死路
+
+        return self.evaluationFunction(state) + dangerScore
 
 
 def betterEvaluationFunction(currentGameState):
@@ -325,66 +346,94 @@ def betterEvaluationFunction(currentGameState):
     DESCRIPTION: <write something here so we know what you did>
     """
     "*** YOUR CODE HERE ***"
+    """
+    升级版吃豆人评价函数：
+    1. 考虑食物和胶囊距离
+    2. 考虑鬼距离与状态
+    3. 考虑左右方向是否被鬼堵住
+    4. 计算安全路径长度，避免进入死路
+    5. 鼓励顺畅移动，不横跳
+    """
     from util import manhattanDistance
+    from game import Directions
+    import util
+    import queue
 
     pacmanPos = currentGameState.getPacmanPosition()
-    food = currentGameState.getFood().asList()
+    foodList = currentGameState.getFood().asList()
     ghosts = currentGameState.getGhostStates()
     capsules = currentGameState.getCapsules()
+    walls = currentGameState.getWalls()
 
     score = currentGameState.getScore()
 
-    # ---------- FEATURE 1: Distance to closest food ----------
-    if food:
-        closestFoodDist = min(manhattanDistance(pacmanPos, f) for f in food)
-        score += 15 / (closestFoodDist + 1)
+    # ---------- FEATURE 1: 食物距离 ----------
+    if foodList:
+        closestFoodDist = min(manhattanDistance(pacmanPos, f) for f in foodList)
+        score += 10 / (closestFoodDist + 1)
 
-    # ---------- FEATURE 2: Total remaining food penalty ----------
-    score -= 4 * len(food)  # 越剩越扣分 = 催他吃
+    # ---------- FEATURE 2: 剩余食物惩罚 ----------
+    score -= 2 * len(foodList)
 
-    # ---------- FEATURE 3: Capsule priority ----------
+    # ---------- FEATURE 3: 胶囊奖励 ----------
     if capsules:
         closestCap = min(manhattanDistance(pacmanPos, c) for c in capsules)
         score += 40 / (closestCap + 1)
-        score -= 20 * len(capsules)  # 越多越扣，逼他吃掉
+        score -= 10 * len(capsules)
 
-    # ---------- FEATURE 4: Ghost awareness ----------
+    # ---------- FEATURE 4: 鬼距离和状态 ----------
     for ghost in ghosts:
         ghostDist = manhattanDistance(pacmanPos, ghost.getPosition())
         scaredTime = ghost.scaredTimer
-
-        if scaredTime > 0:  
-            # ---- Ghost edible: CHASE IT ----
-            score += 100 / (ghostDist + 1)
+        if scaredTime > 0:
+            score += 50 / (ghostDist + 1)
         else:
-            # ---- Ghost active: avoid ----
             if ghostDist == 0:
-                score -= 999999  # 死局
+                score -= 999999
             else:
-                score -= 40 / (ghostDist + 1)
-    # ---------- EXTRA: Avoid corridor trap ----------
-    # x, y = pacmanPos
-    # walls = currentGameState.getWalls()
-    # # 检查左右是否封闭，鬼是否在左右
-    # leftBlocked = walls[x-1][y] or any(g.getPosition() == (x-1, y) for g in ghosts)
-    # rightBlocked = walls[x+1][y] or any(g.getPosition() == (x+1, y) for g in ghosts)
+                score -= 50 / (ghostDist + 1)
 
-    # 如果左右都堵了 → 高风险
-    # if leftBlocked and rightBlocked:
-    #     score -= 300  # 惩罚走入夹击区
+    # ---------- FEATURE 5: 检查左右方向鬼扎堆 ----------
+    leftPos = (pacmanPos[0]-1, pacmanPos[1])
+    rightPos = (pacmanPos[0]+1, pacmanPos[1])
+    leftDanger = sum(1 for g in ghosts if g.getPosition() == leftPos)
+    rightDanger = sum(1 for g in ghosts if g.getPosition() == rightPos)
+    if leftDanger >= 2 and rightDanger >= 2:
+        score -= 200  # 两边鬼扎堆，危险
 
-    # ---------- FEATURE 5: Avoid dead corners ----------
-    walls = currentGameState.getWalls()
+    # ---------- FEATURE 6: 安全路径长度（BFS） ----------
+    def bfs_safe_length(pos):
+        visited = set()
+        q = queue.Queue()
+        q.put((pos, 0))
+        visited.add(pos)
+        safe_count = 0
+        while not q.empty() and safe_count < 50:
+            current, dist = q.get()
+            x, y = current
+            if walls[x][y]:
+                continue
+            safe_count += 1
+            for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+                nx, ny = x+dx, y+dy
+                if (nx,ny) not in visited and not walls[nx][ny]:
+                    if all(manhattanDistance((nx,ny), g.getPosition()) > 1 for g in ghosts):
+                        visited.add((nx,ny))
+                        q.put(((nx,ny), dist+1))
+        return safe_count
+
+    safeLen = bfs_safe_length(pacmanPos)
+    if safeLen < 3:  # 死路或走廊
+        score -= 300
+
+    # ---------- FEATURE 7: 避免卡死 ----------
     x, y = pacmanPos
-    nearbyWalls = (
-        walls[x+1][y] + walls[x-1][y] + walls[x][y+1] + walls[x][y-1]
-    )
+    nearbyWalls = walls[x+1][y] + walls[x-1][y] + walls[x][y+1] + walls[x][y-1]
     if nearbyWalls >= 3:
-        score -= 200  # 不要卡死自己
+        score -= 200
 
-    # ---------- FEATURE 6: Encourage smooth motion ----------
-    # 吃豆人如果停着不动 or 来回横跳 → 扣分（行为收敛）
-    score -= 20  
+    # ---------- FEATURE 8: 鼓励平稳移动 ----------
+    score -= 20
 
     return score
 

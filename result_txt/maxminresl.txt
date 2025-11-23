@@ -1,0 +1,14 @@
+Pacman emerges victorious! Score: 513
+Pacman died! Score: -495
+Pacman emerges victorious! Score: 516
+Pacman emerges victorious! Score: 516
+Pacman died! Score: -496
+Pacman died! Score: -497
+Pacman emerges victorious! Score: 513
+Pacman died! Score: -495
+Pacman died! Score: -496
+Pacman emerges victorious! Score: 511
+Average Score: 9.0
+Scores:        513.0, -495.0, 516.0, 516.0, -496.0, -497.0, 513.0, -495.0, -496.0, 511.0
+Win Rate:      5/10 (0.50)
+Record:        Win, Loss, Win, Win, Loss, Loss, Win, Loss, Loss, Win
